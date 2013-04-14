@@ -1,8 +1,12 @@
 (ns scrutineer.core
-  (:require [clojure.tools.cli :refer [cli]]
+  (:require [clojure.string :as string]
+            [clojure.tools.cli :refer [cli]]
             [criterium.core :refer [quick-benchmark
                                     report-result
-                                    with-progress-reporting]]))
+                                    with-progress-reporting]]
+            [kibit.check :as kibit]
+            [kibit.reporters :refer [pprint-code cli-reporter]])
+  (:gen-class))
 
 (def clojure-core-symbols
   (set (map first (ns-publics 'clojure.core))))
@@ -55,34 +59,73 @@
 (defn remove-trailing-newline [s]
   (apply str (drop-last s)))
 
-(defn time-with-naive-warming [code]
+(defn time-with-naive-warming [code num]
   (last
-   (for [x (range 25)]
+   (for [_ (range num)]
      (remove-trailing-newline
       (with-out-str (time (eval code)))))))
 
-;; (def cli-options
-;;   [["-h" "--help" "Help" :flag true :default false]
-;;    ["-d" "--def-or-defn" :flag true :default false]
-;;    ["-b" "--benchmark"   :flag true :default false]])
+(defn kibit [code]
+  (remove empty?
+          (for [resolution [:toplevel :subform]]
+            (kibit/check-expr code
+                              :rules kibit/all-rules
+                              :guard kibit/unique-alt?
+                              :resolution resolution
+                              :init-ns 'user))))
 
-;; [opts extra banner] (apply #(cli args %) cli-options)
+(defn contains-symbols? [code & syms]
+  (let [seq (flatten code)]
+    (not-every? nil?
+                (for [sym syms]
+                  (some #{sym} seq)))))
+
+(defn contains-def-or-defn? [code]
+  (contains-symbols? code 'def 'defn))
+
+(defmacro ---
+  "A simple convenience macro to clean up the body of -main."
+  [msg body & print?]
+  `(when ~@(seq print?)
+     (do (println ";;" ~(str (string/capitalize msg) ":"))
+         ~body)))
+
+(defn cli-options [args code]
+  (cli args
+       ["-h" "--help"          :flag true :default false]
+       ["-d" "--def-or-defn"   :flag true :default (contains-def-or-defn? code)]
+       ["-b" "--benchmark"     :flag true :default false]
+       ["-k" "--kibit"         :flag true :default true]
+       ["-w" "--warming"       :flag true :default 25]))
 
 (defn -main [& args]
-  (let [code (read)]
-    (println ";; Results")
-    (println "Input:" code)
-    (println "Value:" (eval code))
-    (println "Output:" (with-out-str (eval code)))
-    (println "Depth:" (how-deep code))
-    (println "Length:" (code-length code))
-    (println "Number of Core Functions Used:" (number-of-core-symbols code))
-    (println "Total number of symbols used:" (number-of-symbols code))
-    (println "Time (without warming):" (remove-trailing-newline
-                                        (with-out-str (time (eval code)))))
-    (println "Time (with warming):" (time-with-naive-warming (eval code)))
-    (println)
-    (println "Serious Benchmark:") (-> (eval code)
-                                       (quick-benchmark :verbose true)
-                                       with-progress-reporting
-                                       report-result)))
+  (let [code (read)
+        [opts extra banner] (cli-options args code)]
+
+    (--- "input" (pprint-code code))
+    (--- "value" (pprint-code (eval code)))
+    (let [output (with-out-str (eval code))]
+      (--- "output" (pprint-code output)
+           (not-empty output)))
+
+    (--- "depth" (how-deep code))
+    (--- "length" (code-length code))
+    (--- "number of core functions used" (number-of-core-symbols code))
+    (--- "number of symbols used" (number-of-symbols code))
+    (--- "time (without warming)" (remove-trailing-newline
+                                   (with-out-str (time (eval code)))))
+    (let [warming-num (:warming opts)]
+      (--- (str "time (with warming [" warming-num "]")
+           (time-with-naive-warming (eval code) warming-num)))
+
+    (--- "kibit results"
+         (doseq [check-map (kibit code)]
+           (cli-reporter check-map))
+         (:kibit opts))
+
+    (--- "benchmark"
+         (-> (eval code)
+             (quick-benchmark :verbose true)
+             with-progress-reporting
+             report-result)
+         (:benchmark opts))))

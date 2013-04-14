@@ -8,4 +8,5 @@
                  [me.raynes/conch "0.5.0"]
                  [jonase/kibit "0.0.9-SNAPSHOT"]
                  [criterium "0.3.1"]
-                 [analyze "0.3.0"]])
+                 [analyze "0.3.0"]]
+  :main scrutineer.core)
