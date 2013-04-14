@@ -5,7 +5,9 @@
                                     report-result
                                     with-progress-reporting]]
             [kibit.check :as kibit]
-            [kibit.reporters :refer [pprint-code cli-reporter]])
+            [kibit.reporters :refer [pprint-code cli-reporter]]
+            [alandipert.interpol8 :refer [interpolating]])
+  (:import java.io.File)
   (:gen-class))
 
 (def clojure-core-symbols
@@ -92,16 +94,28 @@
            (pprint-code ~body))
        (println ";;" (str (string/capitalize ~msg) ":") ~body))))
 
+(defn make-tmp-ns-with-user-form [form]
+  (interpolating
+   (let [f (File/createTempFile "tmp" ".clj")
+         fpath (.getPath f)
+         fname (second (re-find #"(.*)\.clj" (.getName f)))]
+     (spit f "(ns #{fname}.user) (defn user-fn [] #{form})")
+     (println ";; Created namespace with wrapper function:" (slurp f))
+     (load-file fpath)
+     (require [(symbol "#{fname}.user") :as (symbol fname)])
+     (ns-resolve (symbol "#{fname}.user") 'user-fn))))
+
 (defn cli-options [args code]
   (cli args
        ["-h" "--help"        :flag true :default false]
        ["-d" "--def-or-defn" :flag true :default (contains-def-or-defn? code)]
-       ["-b" "--benchmark"   :flag true :default false]
+       ["-b" "--benchmark"   :flag true :default true]
        ["-k" "--kibit"       :flag true :default true]
        ["-w" "--warming"     :default 25 :parse-fn #(Integer. %)]))
 
 (defn -main [& args]
   (let [code (read)
+        user-fn (make-tmp-ns-with-user-form code)
         [opts extra banner] (cli-options args code)]
 
     (if (or (-> args empty?) (:help opts))
@@ -113,8 +127,8 @@
         (println (string/join (repeat 30 ";")))
 
         (--- "input" :code code)
-        (--- "value" :code (eval code))
-        (let [output (with-out-str (eval code))]
+        (--- "value" :code (user-fn))
+        (let [output (with-out-str (user-fn))]
           (--- "output" :code output (not-empty output)))
 
         (--- "depth" :value (how-deep code))
@@ -122,20 +136,22 @@
         (--- "number of core functions used" :value (number-of-core-symbols code))
         (--- "number of symbols used" :value (number-of-symbols code))
         (--- "time (without warming)" :value (remove-trailing-newline
-                                              (with-out-str (time (eval code)))))
-        (let [warming-num (:warming opts)]
-          (--- (str "time (with warming [" warming-num "]")
-               :value
-               (time-with-naive-warming
-                (eval code) warming-num)))
+                                              (with-out-str (time (user-fn)))))
+        ;; (let [warming-num (:warming opts)]
+        ;;   (--- (str "time (with warming [" warming-num "])")
+        ;;        :value
+        ;;        (time-with-naive-warming
+        ;;         (user-fn) warming-num)))
 
         (--- "kibit results"
+             :code
              (doseq [check-map (kibit code)]
                (cli-reporter check-map))
              (:kibit opts))
 
         (--- "benchmark"
-             (-> (eval code)
+             :code
+             (-> (user-fn)
                  (quick-benchmark :verbose true)
                  with-progress-reporting
                  report-result)
