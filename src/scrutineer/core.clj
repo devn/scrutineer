@@ -84,48 +84,59 @@
   (contains-symbols? code 'def 'defn))
 
 (defmacro ---
-  "A simple convenience macro to clean up the body of -main."
-  [msg body & print?]
-  `(when ~@(seq print?)
-     (do (println ";;" ~(str (string/capitalize msg) ":"))
-         ~body)))
+  "A convenience macro to clean up the body of -main."
+  [msg code-or-value? body & print-pred]
+  `(when (or ~(nil? print-pred) ~@print-pred)
+     (if (= ~code-or-value? :code)
+       (do (println ";;" (str (string/capitalize ~msg) ":"))
+           (pprint-code ~body))
+       (println ";;" (str (string/capitalize ~msg) ":") ~body))))
 
 (defn cli-options [args code]
   (cli args
-       ["-h" "--help"          :flag true :default false]
-       ["-d" "--def-or-defn"   :flag true :default (contains-def-or-defn? code)]
-       ["-b" "--benchmark"     :flag true :default false]
-       ["-k" "--kibit"         :flag true :default true]
-       ["-w" "--warming"       :flag true :default 25]))
+       ["-h" "--help"        :flag true :default false]
+       ["-d" "--def-or-defn" :flag true :default (contains-def-or-defn? code)]
+       ["-b" "--benchmark"   :flag true :default false]
+       ["-k" "--kibit"       :flag true :default true]
+       ["-w" "--warming"     :default 25 :parse-fn #(Integer. %)]))
 
 (defn -main [& args]
   (let [code (read)
         [opts extra banner] (cli-options args code)]
 
-    (--- "input" (pprint-code code))
-    (--- "value" (pprint-code (eval code)))
-    (let [output (with-out-str (eval code))]
-      (--- "output" (pprint-code output)
-           (not-empty output)))
+    (if (or (-> args empty?) (:help opts))
+      (println banner)
 
-    (--- "depth" (how-deep code))
-    (--- "length" (code-length code))
-    (--- "number of core functions used" (number-of-core-symbols code))
-    (--- "number of symbols used" (number-of-symbols code))
-    (--- "time (without warming)" (remove-trailing-newline
-                                   (with-out-str (time (eval code)))))
-    (let [warming-num (:warming opts)]
-      (--- (str "time (with warming [" warming-num "]")
-           (time-with-naive-warming (eval code) warming-num)))
+      (do
+        (println (string/join (repeat 30 ";")))
+        (println ";; Results:")
+        (println (string/join (repeat 30 ";")))
 
-    (--- "kibit results"
-         (doseq [check-map (kibit code)]
-           (cli-reporter check-map))
-         (:kibit opts))
+        (--- "input" :code code)
+        (--- "value" :code (eval code))
+        (let [output (with-out-str (eval code))]
+          (--- "output" :code output (not-empty output)))
 
-    (--- "benchmark"
-         (-> (eval code)
-             (quick-benchmark :verbose true)
-             with-progress-reporting
-             report-result)
-         (:benchmark opts))))
+        (--- "depth" :value (how-deep code))
+        (--- "length" :value (code-length code))
+        (--- "number of core functions used" :value (number-of-core-symbols code))
+        (--- "number of symbols used" :value (number-of-symbols code))
+        (--- "time (without warming)" :value (remove-trailing-newline
+                                              (with-out-str (time (eval code)))))
+        (let [warming-num (:warming opts)]
+          (--- (str "time (with warming [" warming-num "]")
+               :value
+               (time-with-naive-warming
+                (eval code) warming-num)))
+
+        (--- "kibit results"
+             (doseq [check-map (kibit code)]
+               (cli-reporter check-map))
+             (:kibit opts))
+
+        (--- "benchmark"
+             (-> (eval code)
+                 (quick-benchmark :verbose true)
+                 with-progress-reporting
+                 report-result)
+             (:benchmark opts))))))
