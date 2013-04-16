@@ -85,14 +85,17 @@
 (defn contains-def-or-defn? [code]
   (contains-symbols? code 'def 'defn))
 
-(defmacro ---
-  "A convenience macro to clean up the body of -main."
-  [msg code-or-value? body & print-pred]
-  `(when (or ~(nil? print-pred) ~@print-pred)
-     (if (= ~code-or-value? :code)
-       (do (println ";;" (str (string/capitalize ~msg) ":"))
-           (pprint-code ~body))
-       (println ";;" (str (string/capitalize ~msg) ":") ~body))))
+(defn log-line [msg & body]
+  (if (seq body)
+    (println ";;" (str (string/capitalize msg) ":") body)
+    (println ";;" (str (string/capitalize msg) ":"))))
+
+(defn --- [msg code-or-value? body & print-pred]
+  (when (or (nil? print-pred) print-pred)
+    (if (= code-or-value? :code)
+      (do (log-line msg)
+          (pprint-code body))
+      (log-line msg body))))
 
 (defn make-tmp-ns-with-user-form [form]
   (interpolating
@@ -105,49 +108,30 @@
      (require [(symbol "#{fname}.user") :as (symbol fname)])
      (ns-resolve (symbol "#{fname}.user") 'user-fn))))
 
-(defn cli-options [args code]
-  (cli args
-       ["-h" "--help"        :flag true :default false]
-       ["-d" "--def-or-defn" :flag true :default (contains-def-or-defn? code)]
-       ["-b" "--benchmark"   :flag true :default true]
-       ["-k" "--kibit"       :flag true :default true]
-       ["-w" "--warming"     :default 25 :parse-fn #(Integer. %)]))
-
-(defn -main [& args]
-  (let [code (read)
-        user-fn (make-tmp-ns-with-user-form code)
-        [opts extra banner] (cli-options args code)]
-
-    (if (or (-> args empty?) (:help opts))
-      (println banner)
-
+(defn embedded-repl []
+  (print (str (ns-name *ns*) "~> "))
+  (flush)
+  (let [expr (read)
+        user-fn (make-tmp-ns-with-user-form expr)
+        value (eval expr)]
+    (when (not= :quit value)
       (do
-        (println (string/join (repeat 30 ";")))
-        (println ";; Results:")
-        (println (string/join (repeat 30 ";")))
-
-        (--- "input" :code code)
-        (--- "value" :code (user-fn))
+        (--- "input" :code expr)
+        (--- "value" :code value)
         (let [output (with-out-str (user-fn))]
           (--- "output" :code output (not-empty output)))
 
-        (--- "depth" :value (how-deep code))
-        (--- "length" :value (code-length code))
-        (--- "number of core functions used" :value (number-of-core-symbols code))
-        (--- "number of symbols used" :value (number-of-symbols code))
+        (--- "depth" :value (how-deep expr))
+        (--- "length" :value (code-length expr))
+        (--- "number of core functions used" :value (number-of-core-symbols expr))
+        (--- "number of symbols used" :value (number-of-symbols expr))
         (--- "time (without warming)" :value (remove-trailing-newline
                                               (with-out-str (time (user-fn)))))
-        ;; (let [warming-num (:warming opts)]
-        ;;   (--- (str "time (with warming [" warming-num "])")
-        ;;        :value
-        ;;        (time-with-naive-warming
-        ;;         (user-fn) warming-num)))
-
         (--- "kibit results"
              :code
-             (doseq [check-map (kibit code)]
+             (doseq [check-map (kibit expr)]
                (cli-reporter check-map))
-             (:kibit opts))
+             true)
 
         (--- "benchmark"
              :code
@@ -155,4 +139,8 @@
                  (quick-benchmark :verbose true)
                  with-progress-reporting
                  report-result)
-             (:benchmark opts))))))
+             true))
+      (recur))))
+
+(defn -main [& args]
+  (embedded-repl))
