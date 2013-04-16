@@ -116,7 +116,7 @@
         (--- "length" :value (code-length expr))
         (--- "number of core functions used" :value (number-of-core-symbols expr))
         (--- "number of symbols used" :value (number-of-symbols expr))
-        (--- "time (without warming)" :value (remove-trailing-newline
+        (--- "time (without warming)" :value (string/trim-newline
                                               (with-out-str (time (user-fn)))))
         (--- "kibit results"
              :code
