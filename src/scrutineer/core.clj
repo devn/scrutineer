@@ -58,15 +58,6 @@
                     (comma? %)))
        count))
 
-(defn remove-trailing-newline [s]
-  (apply str (drop-last s)))
-
-(defn time-with-naive-warming [code num]
-  (last
-   (for [_ (range num)]
-     (remove-trailing-newline
-      (with-out-str (time (eval code)))))))
-
 (defn kibit [code]
   (remove empty?
           (for [resolution [:toplevel :subform]]
