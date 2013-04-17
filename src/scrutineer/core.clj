@@ -94,7 +94,6 @@
          fpath (.getPath f)
          fname (second (re-find #"(.*)\.clj" (.getName f)))]
      (spit f "(ns #{fname}.user) (defn user-fn [] #{form})")
-     (println ";; Created namespace with wrapper function:" (slurp f))
      (load-file fpath)
      (require [(symbol "#{fname}.user") :as (symbol fname)])
      (ns-resolve (symbol "#{fname}.user") 'user-fn))))
@@ -109,6 +108,7 @@
       (do
         (--- "input" :code expr)
         (--- "value" :code value)
+
         (let [output (with-out-str (user-fn))]
           (--- "output" :code output (not-empty output)))
 
